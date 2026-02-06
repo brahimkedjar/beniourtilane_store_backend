@@ -1,0 +1,10 @@
+All use the same password: Test1234!
+
+Accounts (email → city):
+
+operator.algiers@trackbus.dev → Algiers
+operator.oran@trackbus.dev → Oran
+operator.constantine@trackbus.dev → Constantine
+operator.annaba@trackbus.dev → Annaba
+operator.blida@trackbus.dev → Blida
+They are already isActive=true with lastL

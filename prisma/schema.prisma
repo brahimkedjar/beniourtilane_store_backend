@@ -1,0 +1,228 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  extensions = [postgis, pgcrypto]
+}
+
+enum UserRole {
+  PASSENGER
+  OPERATOR
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELED
+  EXPIRED
+}
+
+enum ActivationMode {
+  AUTO
+  MANUAL
+}
+
+enum RentalVehicleKind {
+  BUS
+  CAR
+}
+
+enum RentalListingStatus {
+  AVAILABLE
+  RESERVED
+  INACTIVE
+}
+
+enum RentalRequestStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELED
+  EXPIRED
+}
+
+model User {
+  id           String           @id @default(uuid())
+  email        String           @unique
+  firstName    String?
+  lastName     String?
+  passwordHash String
+  role         UserRole
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  operatorProfile OperatorProfile?
+  bookings        Booking[]      @relation("PassengerBookings")
+  rentalRequests  RentalRequest[] @relation("PassengerRentalRequests")
+  rentalConversations RentalConversation[] @relation("PassengerRentalConversations")
+  rentalMessages  RentalMessage[] @relation("RentalMessageSender")
+  ratingsGiven    Rating[]       @relation("PassengerRatings")
+}
+
+model OperatorProfile {
+  id             String        @id @default(uuid())
+  userId         String        @unique
+  user           User          @relation(fields: [userId], references: [id])
+  firstName      String?
+  lastName       String?
+  phone          String?
+  phoneSecondary String?
+  phoneNumbers   String[]      @default([])
+  busType        String?
+  seatCount      Int?
+  plateNumber    String?
+  price          Int?
+  destinations   String[]      @default([])
+  destinationsPricing Json?
+  activationMode ActivationMode @default(AUTO)
+  isActive       Boolean       @default(false)
+
+  lastLocation   Unsupported("geography")?
+  lastLat        Float?
+  lastLng        Float?
+  lastLocationAt DateTime?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workingHours WorkingHours[]
+  bookings     Booking[] @relation("OperatorBookings")
+  locations    OperatorLocation[]
+  rentalListings RentalListing[]
+  rentalConversations RentalConversation[] @relation("OperatorRentalConversations")
+  ratings      Rating[]
+}
+
+model WorkingHours {
+  id         String   @id @default(uuid())
+  operatorId String
+  operator   OperatorProfile @relation(fields: [operatorId], references: [id])
+  dayOfWeek  Int
+  startTime  String
+  endTime    String
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([operatorId, dayOfWeek])
+}
+
+model Booking {
+  id             String        @id @default(uuid())
+  passengerId    String
+  operatorId     String
+  passenger      User          @relation("PassengerBookings", fields: [passengerId], references: [id])
+  operator       OperatorProfile @relation("OperatorBookings", fields: [operatorId], references: [id])
+  seatsRequested Int
+  status         BookingStatus @default(PENDING)
+  expiresAt      DateTime?
+  passengerLat   Float?
+  passengerLng   Float?
+  passengerLocationAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  rating         Rating?
+}
+
+model Rating {
+  id          String           @id @default(uuid())
+  bookingId   String           @unique
+  booking     Booking          @relation(fields: [bookingId], references: [id])
+  operatorId  String
+  operator    OperatorProfile  @relation(fields: [operatorId], references: [id])
+  passengerId String
+  passenger   User             @relation("PassengerRatings", fields: [passengerId], references: [id])
+  score       Int
+  comment     String?
+  createdAt   DateTime         @default(now())
+}
+
+model OperatorLocation {
+  id         String   @id @default(uuid())
+  operatorId String
+  operator   OperatorProfile @relation(fields: [operatorId], references: [id])
+  location   Unsupported("geography")
+  latitude   Float
+  longitude  Float
+  recordedAt DateTime @default(now())
+}
+
+model RentalListing {
+  id             String             @id @default(uuid())
+  operatorId     String
+  operator       OperatorProfile    @relation(fields: [operatorId], references: [id])
+  vehicleKind    RentalVehicleKind
+  title          String
+  description    String?
+  pricePerDay    Int?
+  seatCount      Int?
+  plateNumber    String?
+  location       String?
+  availableFrom  DateTime?
+  availableTo    DateTime?
+  status         RentalListingStatus @default(AVAILABLE)
+  reservedFrom   DateTime?
+  reservedTo     DateTime?
+  reservedRequestId String?         @unique
+  reservedRequest   RentalRequest?  @relation(fields: [reservedRequestId], references: [id])
+  reservedPassengerId String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  conversations RentalConversation[]
+}
+
+model RentalRequest {
+  id           String             @id @default(uuid())
+  passengerId  String
+  passenger    User               @relation("PassengerRentalRequests", fields: [passengerId], references: [id])
+  vehicleKind  RentalVehicleKind
+  startDate    DateTime
+  endDate      DateTime
+  seatCount    Int?
+  budget       Int?
+  notes        String?
+  status       RentalRequestStatus @default(PENDING)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  conversations RentalConversation[]
+  reservedListing RentalListing?
+}
+
+model RentalConversation {
+  id          String           @id @default(uuid())
+  listingId   String?
+  requestId   String?
+  listing     RentalListing?   @relation(fields: [listingId], references: [id])
+  request     RentalRequest?   @relation(fields: [requestId], references: [id])
+  passengerId String
+  operatorId  String
+  passenger   User             @relation("PassengerRentalConversations", fields: [passengerId], references: [id])
+  operator    OperatorProfile  @relation("OperatorRentalConversations", fields: [operatorId], references: [id])
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  messages    RentalMessage[]
+
+  @@unique([listingId, passengerId])
+  @@unique([requestId, operatorId])
+}
+
+model RentalMessage {
+  id             String             @id @default(uuid())
+  conversationId String
+  senderId       String
+  body           String
+  createdAt      DateTime           @default(now())
+
+  conversation   RentalConversation @relation(fields: [conversationId], references: [id])
+  sender         User               @relation("RentalMessageSender", fields: [senderId], references: [id])
+}
