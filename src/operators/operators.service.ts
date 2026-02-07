@@ -15,6 +15,16 @@ import { isScheduleActive } from './schedule.utils';
 export class OperatorsService {
   constructor(private prisma: PrismaService) {}
 
+  private busListCache = {
+    all: { expiresAt: 0, data: null as any[] | null, inFlight: null as Promise<any[]> | null },
+    active: { expiresAt: 0, data: null as any[] | null, inFlight: null as Promise<any[]> | null },
+  };
+
+  private get busListCacheMs() {
+    const value = Number(process.env.BUS_LIST_CACHE_MS ?? 2000);
+    return Number.isFinite(value) ? Math.max(value, 0) : 2000;
+  }
+
   async getProfile(userId: string) {
     const profile = await this.prisma.operatorProfile.findUnique({
       where: { userId },
@@ -232,6 +242,36 @@ export class OperatorsService {
 
   async listBuses(options?: { onlyActive?: boolean }) {
     const onlyActive = options?.onlyActive ?? false;
+    const cacheKey = onlyActive ? 'active' : 'all';
+    const cacheMs = this.busListCacheMs;
+
+    if (cacheMs > 0) {
+      const cached = this.busListCache[cacheKey];
+      const nowTs = Date.now();
+      if (cached.data && cached.expiresAt > nowTs) {
+        return cached.data;
+      }
+      if (cached.inFlight) {
+        return cached.inFlight;
+      }
+
+      const promise = this.fetchBuses(onlyActive).then((data) => {
+        cached.data = data;
+        cached.expiresAt = nowTs + cacheMs;
+        return data;
+      });
+
+      cached.inFlight = promise.finally(() => {
+        cached.inFlight = null;
+      });
+
+      return cached.inFlight;
+    }
+
+    return this.fetchBuses(onlyActive);
+  }
+
+  private async fetchBuses(onlyActive: boolean) {
     const now = new Date();
     const dayOfWeek = now.getDay();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -242,19 +282,41 @@ export class OperatorsService {
           ? { isActive: true, lastLat: { not: null }, lastLng: { not: null } }
           : {}),
       },
-      include: {
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        phoneSecondary: true,
+        phoneNumbers: true,
+        busType: true,
+        seatCount: true,
+        plateNumber: true,
+        price: true,
+        destinations: true,
+        destinationsPricing: true,
+        isActive: true,
+        lastLat: true,
+        lastLng: true,
+        lastLocationAt: true,
+        updatedAt: true,
         workingHours: {
           where: { dayOfWeek },
+          select: { dayOfWeek: true, startTime: true, endTime: true, enabled: true },
         },
       },
       orderBy: { updatedAt: 'desc' },
     });
 
-    const confirmed = await this.prisma.booking.groupBy({
-      by: ['operatorId'],
-      where: { status: 'CONFIRMED' },
-      _sum: { seatsRequested: true },
-    });
+    const operatorIds = operators.map((operator) => operator.id);
+    const confirmed =
+      operatorIds.length === 0
+        ? []
+        : await this.prisma.booking.groupBy({
+            by: ['operatorId'],
+            where: { status: 'CONFIRMED', operatorId: { in: operatorIds } },
+            _sum: { seatsRequested: true },
+          });
     const confirmedMap = new Map(
       confirmed.map((item) => [item.operatorId, item._sum.seatsRequested || 0]),
     );
